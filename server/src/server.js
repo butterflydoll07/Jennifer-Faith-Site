@@ -3,6 +3,7 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const bodyParser = require('body-parser');
+
 const { ChristGuard } = require('./christ-guard');
 const { renderWeekHTML, makePDF } = require('./printables');
 
@@ -23,13 +24,11 @@ if (!fs.existsSync(JOURNAL_FILE)) fs.writeFileSync(JOURNAL_FILE, '[]', 'utf-8');
 // Health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+// Quick parser/debug endpoint
 app.get('/api/parse', (req, res) => {
-  const { ChristGuard } = require('./christ-guard');
-  const { quote } = ChristGuard;
   try {
     const ref = String(req.query.ref || '');
-    // this will throw if not found; we just return the parsed + whether it's a chapter
-    const found = quote(ref);
+    const found = ChristGuard.quote(ref); // throws if not found
     res.json({
       ref,
       type: typeof found === 'string' ? 'single-verse' : 'chapter',
@@ -38,7 +37,8 @@ app.get('/api/parse', (req, res) => {
     res.status(400).json({ error: String(e.message || e) });
   }
 });
-// -------- Verse API (now supports Book Chapter:Verse or Book Chapter) -------
+
+// -------- Verse API (Book C:V or Book C) ------------------------------------
 app.get('/api/verse', (req, res) => {
   try {
     const ref = String(req.query.ref || '').trim();
@@ -46,12 +46,11 @@ app.get('/api/verse', (req, res) => {
 
     const result = ChristGuard.quote(ref); // string (verse) or object (chapter)
 
-    // If a whole chapter is requested, return the map { "1": "In the beginning...", ... }
     if (typeof result === 'object') {
+      // Whole chapter map: { "1": "...", "2": "...", ... }
       return res.json({ ref, version: 'KJV', text: result });
     }
-
-    // Single verse string
+    // Single verse
     return res.json({ ref, version: 'KJV', text: result });
   } catch (e) {
     return res.status(404).json({ error: e.message });
@@ -73,7 +72,6 @@ app.get('/api/journal', (_req, res) => {
 app.post('/api/journal', async (req, res) => {
   try {
     const userText = String(req.body.text || '');
-    // simple gate using ChristGuard; could expand later
     const entry = { id: Date.now(), text: userText, at: new Date().toISOString() };
 
     const arr = JSON.parse(fs.readFileSync(JOURNAL_FILE, 'utf-8'));
@@ -109,10 +107,7 @@ app.post('/api/printables/week.pdf', async (req, res) => {
   }
 });
 
-// Start
-const PORT = process.env.PORT || 3000;
-const ChristGuard = require('./christ-guard');
-
+// -------- Store debug (check keys exist) -------------------------------------
 app.get('/api/debug/has', (req, res) => {
   const { book = '', chapter = '', verse = '' } = req.query;
   const store = ChristGuard.loadStore();
@@ -124,7 +119,10 @@ app.get('/api/debug/has', (req, res) => {
     hasChapter: !!c,
     hasVerse: typeof v === 'string',
     sampleChapters: b ? Object.keys(b).slice(0, 5) : [],
-    sampleVerses: c ? Object.keys(c).slice(0, 10) : []
+    sampleVerses: c ? Object.keys(c).slice(0, 10) : [],
   });
 });
+
+// Start
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Server listening on :${PORT}`));
