@@ -21,7 +21,10 @@ function renderVerseResult(data) {
 
 async function getVerse() {
   const ref = (document.getElementById("ref").value || "").trim();
-  if (!ref) { renderVerseResult({ error: "Please enter a reference (e.g., John 3:16 or Ps 23)." }); return; }
+  if (!ref) {
+    renderVerseResult({ error: "Please enter a reference (e.g., John 3:16 or Ps 23)." });
+    return;
+  }
   const res = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}`);
   const data = await res.json();
   renderVerseResult(data);
@@ -62,9 +65,7 @@ async function genWeekHTML() {
   const week = (document.getElementById("weekNum").value || "").trim();
   const theme = (document.getElementById("weekTheme").value || "").trim();
   const refs = (document.getElementById("weekRefs").value || "")
-    .split(",")
-    .map(r => r.trim())
-    .filter(Boolean);
+    .split(",").map(r => r.trim()).filter(Boolean);
 
   const res = await fetch("/api/printables/week", {
     method: "POST",
@@ -79,9 +80,7 @@ async function genWeekPDF() {
   const week = (document.getElementById("weekNum").value || "").trim();
   const theme = (document.getElementById("weekTheme").value || "").trim();
   const refs = (document.getElementById("weekRefs").value || "")
-    .split(",")
-    .map(r => r.trim())
-    .filter(Boolean);
+    .split(",").map(r => r.trim()).filter(Boolean);
 
   const res = await fetch("/api/printables/week.pdf", {
     method: "POST",
@@ -93,7 +92,7 @@ async function genWeekPDF() {
   window.open(url, "_blank");
 }
 
-// Bind buttons
+// Bind buttons (script is loaded at the end of <body>, so elements exist)
 document.getElementById("btn-verse").onclick = getVerse;
 document.getElementById("btn-save").onclick = saveJournal;
 document.getElementById("btn-check").onclick = runCheck;
