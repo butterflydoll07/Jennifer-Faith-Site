@@ -1,12 +1,35 @@
+function renderVerseResult(data) {
+  const el = document.getElementById("verse");
+  if (data.error) {
+    el.textContent = `Error: ${data.error}`;
+    return;
+  }
+  const txt = data.text;
+
+  if (txt && typeof txt === "object") {
+    // Whole chapter: { "1": "...", "2": "...", ... }
+    el.textContent = Object.entries(txt)
+      .sort((a, b) => Number(a[0]) - Number(b[0]))
+      .map(([n, t]) => `${n}. ${t}`)
+      .join("\n");
+  } else if (typeof txt === "string") {
+    el.textContent = txt;
+  } else {
+    el.textContent = JSON.stringify(data, null, 2);
+  }
+}
+
 async function getVerse() {
-  const ref = document.getElementById("ref").value;
+  const ref = (document.getElementById("ref").value || "").trim();
+  if (!ref) { renderVerseResult({ error: "Please enter a reference (e.g., John 3:16 or Ps 23)." }); return; }
   const res = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}`);
   const data = await res.json();
-  document.getElementById("verse").textContent = data.text || JSON.stringify(data);
+  renderVerseResult(data);
 }
 
 async function saveJournal() {
-  const text = document.getElementById("journalText").value;
+  const text = (document.getElementById("journalText").value || "").trim();
+  if (!text) return;
   const res = await fetch("/api/journal", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -15,7 +38,7 @@ async function saveJournal() {
   const data = await res.json();
   if (data.entry) {
     const li = document.createElement("li");
-    li.textContent = data.entry.text + " (" + data.entry.at + ")";
+    li.textContent = `${data.entry.text} (${data.entry.at})`;
     document.getElementById("journalList").prepend(li);
     document.getElementById("journalText").value = "";
   } else {
@@ -24,7 +47,8 @@ async function saveJournal() {
 }
 
 async function runCheck() {
-  const text = document.getElementById("checkText").value;
+  const text = (document.getElementById("checkText").value || "").trim();
+  if (!text) return;
   const res = await fetch("/api/check", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -35,9 +59,12 @@ async function runCheck() {
 }
 
 async function genWeekHTML() {
-  const week = document.getElementById("weekNum").value;
-  const theme = document.getElementById("weekTheme").value;
-  const refs = document.getElementById("weekRefs").value.split(",").map(r => r.trim());
+  const week = (document.getElementById("weekNum").value || "").trim();
+  const theme = (document.getElementById("weekTheme").value || "").trim();
+  const refs = (document.getElementById("weekRefs").value || "")
+    .split(",")
+    .map(r => r.trim())
+    .filter(Boolean);
 
   const res = await fetch("/api/printables/week", {
     method: "POST",
@@ -49,9 +76,12 @@ async function genWeekHTML() {
 }
 
 async function genWeekPDF() {
-  const week = document.getElementById("weekNum").value;
-  const theme = document.getElementById("weekTheme").value;
-  const refs = document.getElementById("weekRefs").value.split(",").map(r => r.trim());
+  const week = (document.getElementById("weekNum").value || "").trim();
+  const theme = (document.getElementById("weekTheme").value || "").trim();
+  const refs = (document.getElementById("weekRefs").value || "")
+    .split(",")
+    .map(r => r.trim())
+    .filter(Boolean);
 
   const res = await fetch("/api/printables/week.pdf", {
     method: "POST",
