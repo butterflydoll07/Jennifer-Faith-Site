@@ -96,4 +96,20 @@ app.post('/api/printables/week.pdf', async (req, res) => {
 
 // Start
 const PORT = process.env.PORT || 3000;
+const ChristGuard = require('./christ-guard');
+
+app.get('/api/debug/has', (req, res) => {
+  const { book = '', chapter = '', verse = '' } = req.query;
+  const store = ChristGuard.loadStore();
+  const b = store[book];
+  const c = b && b[chapter];
+  const v = c && c[verse];
+  res.json({
+    hasBook: !!b,
+    hasChapter: !!c,
+    hasVerse: typeof v === 'string',
+    sampleChapters: b ? Object.keys(b).slice(0, 5) : [],
+    sampleVerses: c ? Object.keys(c).slice(0, 10) : []
+  });
+});
 app.listen(PORT, () => console.log(`Server listening on :${PORT}`));
