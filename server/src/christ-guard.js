@@ -1,4 +1,4 @@
-// christ-guard.js — exact KJV quotes only; basic "Christ Test" guards
+// christ-guard.js — exact KJV quotes only; robust verse parsing + "Christ Test"
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
@@ -6,90 +6,89 @@ const crypto = require('crypto');
 // ---------- Where the full KJV JSON lives (book -> chapter -> verse) ----------
 const STORE_PATH = path.resolve(__dirname, 'en_kjv.json');
 
-// ---------- Common book abbreviations -> canonical book names ----------
-const ABBREVIATIONS = {
+// ---------- Abbreviations (seed set); we’ll also add canonical names from JSON ----------
+const BASE_ABBREVIATIONS = {
   // Pentateuch
-  'Gen': 'Genesis', 'Ge': 'Genesis', 'Gn': 'Genesis',
-  'Ex': 'Exodus', 'Exod': 'Exodus',
-  'Lev': 'Leviticus', 'Lv': 'Leviticus',
-  'Num': 'Numbers', 'Nu': 'Numbers', 'Nm': 'Numbers', 'Nb': 'Numbers',
-  'Deut': 'Deuteronomy', 'Dt': 'Deuteronomy',
+  'gen': 'Genesis', 'ge': 'Genesis', 'gn': 'Genesis',
+  'ex': 'Exodus', 'exod': 'Exodus',
+  'lev': 'Leviticus', 'lv': 'Leviticus',
+  'num': 'Numbers', 'nu': 'Numbers', 'nm': 'Numbers', 'nb': 'Numbers',
+  'deut': 'Deuteronomy', 'dt': 'Deuteronomy',
 
   // History
-  'Josh': 'Joshua', 'Jos': 'Joshua',
-  'Judg': 'Judges', 'Jdg': 'Judges', 'Jg': 'Judges',
-  'Ruth': 'Ruth',
-  '1Sam': '1 Samuel', '1 Sam': '1 Samuel', 'I Sam': '1 Samuel',
-  '2Sam': '2 Samuel', '2 Sam': '2 Samuel', 'II Sam': '2 Samuel',
-  '1Kgs': '1 Kings', '1 Kgs': '1 Kings', '1Ki': '1 Kings', 'I Kgs': '1 Kings',
-  '2Kgs': '2 Kings', '2 Kgs': '2 Kings', '2Ki': '2 Kings', 'II Kgs': '2 Kings',
-  '1Chr': '1 Chronicles', '1 Chr': '1 Chronicles', 'I Chr': '1 Chronicles',
-  '2Chr': '2 Chronicles', '2 Chr': '2 Chronicles', 'II Chr': '2 Chronicles',
-  'Ezra': 'Ezra',
-  'Neh': 'Nehemiah',
-  'Esth': 'Esther', 'Est': 'Esther',
+  'josh': 'Joshua', 'jos': 'Joshua',
+  'judg': 'Judges', 'jdg': 'Judges', 'jg': 'Judges',
+  'ruth': 'Ruth',
+  '1sam': '1 Samuel', '1 sam': '1 Samuel', 'i sam': '1 Samuel',
+  '2sam': '2 Samuel', '2 sam': '2 Samuel', 'ii sam': '2 Samuel',
+  '1kgs': '1 Kings', '1 kgs': '1 Kings', '1ki': '1 Kings', 'i kgs': '1 Kings',
+  '2kgs': '2 Kings', '2 kgs': '2 Kings', '2ki': '2 Kings', 'ii kgs': '2 Kings',
+  '1chr': '1 Chronicles', '1 chr': '1 Chronicles', 'i chr': '1 Chronicles',
+  '2chr': '2 Chronicles', '2 chr': '2 Chronicles', 'ii chr': '2 Chronicles',
+  'ezra': 'Ezra',
+  'neh': 'Nehemiah',
+  'esth': 'Esther', 'est': 'Esther',
 
   // Poetry/Wisdom
-  'Job': 'Job',
-  'Ps': 'Psalms', 'Psa': 'Psalms', 'Psal': 'Psalms',
-  'Prov': 'Proverbs', 'Pr': 'Proverbs', 'Prv': 'Proverbs',
-  'Eccl': 'Ecclesiastes', 'Ecc': 'Ecclesiastes', 'Qoh': 'Ecclesiastes',
-  'Song': 'Song of Solomon', 'Song of Sol': 'Song of Solomon',
-  'Cant': 'Song of Solomon',
+  'job': 'Job',
+  'ps': 'Psalms', 'psa': 'Psalms', 'psal': 'Psalms',
+  'prov': 'Proverbs', 'pr': 'Proverbs', 'prv': 'Proverbs',
+  'eccl': 'Ecclesiastes', 'ecc': 'Ecclesiastes', 'qoh': 'Ecclesiastes',
+  'song': 'Song of Solomon', 'song of sol': 'Song of Solomon', 'cant': 'Song of Solomon',
 
   // Major Prophets
-  'Isa': 'Isaiah',
-  'Jer': 'Jeremiah',
-  'Lam': 'Lamentations',
-  'Ezek': 'Ezekiel', 'Eze': 'Ezekiel',
-  'Dan': 'Daniel', 'Dn': 'Daniel',
+  'isa': 'Isaiah',
+  'jer': 'Jeremiah',
+  'lam': 'Lamentations',
+  'ezek': 'Ezekiel', 'eze': 'Ezekiel',
+  'dan': 'Daniel', 'dn': 'Daniel',
 
   // Minor Prophets
-  'Hos': 'Hosea',
-  'Joel': 'Joel',
-  'Amos': 'Amos',
-  'Obad': 'Obadiah', 'Ob': 'Obadiah',
-  'Jon': 'Jonah',
-  'Mic': 'Micah',
-  'Nah': 'Nahum',
-  'Hab': 'Habakkuk',
-  'Zeph': 'Zephaniah', 'Zep': 'Zephaniah',
-  'Hag': 'Haggai',
-  'Zech': 'Zechariah', 'Zec': 'Zechariah',
-  'Mal': 'Malachi',
+  'hos': 'Hosea',
+  'joel': 'Joel',
+  'amos': 'Amos',
+  'obad': 'Obadiah', 'ob': 'Obadiah',
+  'jon': 'Jonah',
+  'mic': 'Micah',
+  'nah': 'Nahum',
+  'hab': 'Habakkuk',
+  'zeph': 'Zephaniah', 'zep': 'Zephaniah',
+  'hag': 'Haggai',
+  'zech': 'Zechariah', 'zec': 'Zechariah',
+  'mal': 'Malachi',
 
   // Gospels & Acts
-  'Mt': 'Matthew', 'Matt': 'Matthew',
-  'Mk': 'Mark',
-  'Lk': 'Luke',
-  'Jn': 'John',
-  'Acts': 'Acts',
+  'mt': 'Matthew', 'matt': 'Matthew',
+  'mk': 'Mark',
+  'lk': 'Luke',
+  'jn': 'John',
+  'acts': 'Acts',
 
   // Pauline Epistles
-  'Rom': 'Romans',
-  '1Cor': '1 Corinthians', '1 Cor': '1 Corinthians', 'I Cor': '1 Corinthians',
-  '2Cor': '2 Corinthians', '2 Cor': '2 Corinthians', 'II Cor': '2 Corinthians',
-  'Gal': 'Galatians',
-  'Eph': 'Ephesians',
-  'Phil': 'Philippians',
-  'Col': 'Colossians',
-  '1Thess': '1 Thessalonians', '1 Thess': '1 Thessalonians', 'I Thess': '1 Thessalonians',
-  '2Thess': '2 Thessalonians', '2 Thess': '2 Thessalonians', 'II Thess': '2 Thessalonians',
-  '1Tim': '1 Timothy', '1 Tim': '1 Timothy', 'I Tim': '1 Timothy',
-  '2Tim': '2 Timothy', '2 Tim': '2 Timothy', 'II Tim': '2 Timothy',
-  'Tit': 'Titus', 'Titus': 'Titus',
-  'Phlm': 'Philemon', 'Philem': 'Philemon',
+  'rom': 'Romans',
+  '1cor': '1 Corinthians', '1 cor': '1 Corinthians', 'i cor': '1 Corinthians',
+  '2cor': '2 Corinthians', '2 cor': '2 Corinthians', 'ii cor': '2 Corinthians',
+  'gal': 'Galatians',
+  'eph': 'Ephesians',
+  'phil': 'Philippians',
+  'col': 'Colossians',
+  '1thess': '1 Thessalonians', '1 thess': '1 Thessalonians', 'i thess': '1 Thessalonians',
+  '2thess': '2 Thessalonians', '2 thess': '2 Thessalonians', 'ii thess': '2 Thessalonians',
+  '1tim': '1 Timothy', '1 tim': '1 Timothy', 'i tim': '1 Timothy',
+  '2tim': '2 Timothy', '2 tim': '2 Timothy', 'ii tim': '2 Timothy',
+  'tit': 'Titus',
+  'phlm': 'Philemon', 'philem': 'Philemon',
 
   // General Epistles & Revelation
-  'Heb': 'Hebrews',
-  'Jas': 'James',
-  '1Pet': '1 Peter', '1 Pet': '1 Peter', 'I Pet': '1 Peter',
-  '2Pet': '2 Peter', '2 Pet': '2 Peter', 'II Pet': '2 Peter',
-  '1Jn': '1 John', '1 Jn': '1 John', 'I Jn': '1 John',
-  '2Jn': '2 John', '2 Jn': '2 John', 'II Jn': '2 John',
-  '3Jn': '3 John', '3 Jn': '3 John', 'III Jn': '3 John',
-  'Jude': 'Jude',
-  'Rev': 'Revelation', 'Re': 'Revelation', 'Apoc': 'Revelation'
+  'heb': 'Hebrews',
+  'jas': 'James',
+  '1pet': '1 Peter', '1 pet': '1 Peter', 'i pet': '1 Peter',
+  '2pet': '2 Peter', '2 pet': '2 Peter', 'ii pet': '2 Peter',
+  '1jn': '1 John', '1 jn': '1 John', 'i jn': '1 John',
+  '2jn': '2 John', '2 jn': '2 John', 'ii jn': '2 John',
+  '3jn': '3 John', '3 jn': '3 John', 'iii jn': '3 John',
+  'jude': 'Jude',
+  'rev': 'Revelation', 're': 'Revelation', 'apoc': 'Revelation'
 };
 
 // ---------- Optional integrity lock (leave blank for now) ----------
@@ -106,6 +105,40 @@ function loadRaw() {
 
 const STORE = loadRaw(); // cache in memory
 
+// ---------- Build a flexible BOOK_INDEX (abbrevs + every canonical name variant) ----------
+const BOOK_INDEX = (() => {
+  const idx = Object.create(null);
+
+  // helper: register a key (normalized) that maps to canonical
+  const add = (key, canonical) => { idx[key] = canonical; };
+
+  // Normalize forms: lowercase, collapse spaces, drop trailing dots
+  const norm = (s) => String(s).toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
+
+  // 1) From JSON keys (canonical names)
+  for (const canonical of Object.keys(STORE)) {
+    const n = norm(canonical);
+    add(n, canonical);
+
+    // also add versions without "of" (e.g., "song of solomon" -> "song solomon")
+    if (n.includes(' of ')) add(n.replace(' of ', ' '), canonical);
+
+    // Also handle numerals jammed together, like "1john"
+    const m = n.match(/^([123])\s+(.*)$/);
+    if (m) add(`${m[1]}${m[2]}`, canonical);
+  }
+
+  // 2) From abbreviation table
+  for (const [abbr, canonical] of Object.entries(BASE_ABBREVIATIONS)) {
+    add(norm(abbr), canonical);
+    // also add jammed numeral versions (e.g., "1 cor" -> "1cor")
+    const m = abbr.match(/^([123])\s+(.*)$/i);
+    if (m) add(norm(`${m[1]}${m[2]}`), canonical);
+  }
+
+  return { add, norm, map: idx };
+})();
+
 // -------- Verse lookup helpers (Book Chapter:Verse or Book Chapter) --------
 function parseRef(ref) {
   // Accepts: 'John 3:16', '1 John 4:2', 'Leviticus 2:3', 'Lev 2:3', 'Ps 23'
@@ -115,17 +148,17 @@ function parseRef(ref) {
 
   if (!m) return null;
 
-  let book = m[1].replace(/\s+/g, ' ').replace(/\.$/, '').trim();
-
-  // Expand abbreviations (keep spaced numerals like "1 John")
-  if (ABBREVIATIONS[book]) {
-    book = ABBREVIATIONS[book];
-  }
-
+  let rawBook = m[1].replace(/\s+/g, ' ').replace(/\.$/, '').trim();
   const chapter = m[2] ? parseInt(m[2], 10) : null;
   const verse = m[3] ? parseInt(m[3], 10) : null;
 
-  return { book, chapter, verse };
+  // Normalize and resolve to canonical
+  const key = BOOK_INDEX.norm(rawBook);
+  const canonical = BOOK_INDEX.map[key];
+
+  if (!canonical) return null;
+
+  return { book: canonical, chapter, verse };
 }
 
 function getFromStore(ref) {
@@ -136,18 +169,12 @@ function getFromStore(ref) {
   const bookNode = STORE[book];
   if (!bookNode) return null;
 
-  if (chapter == null) {
-    // Only a book provided -> not allowed (must have at least a chapter)
-    return null;
-  }
+  if (chapter == null) return null; // must have at least a chapter
 
   const chapNode = bookNode[String(chapter)];
   if (!chapNode) return null;
 
-  if (verse == null) {
-    // Whole chapter object (verseNumber -> text)
-    return chapNode;
-  }
+  if (verse == null) return chapNode; // Whole chapter (object)
 
   const v = chapNode[String(verse)];
   return typeof v === 'string' ? v : null;
@@ -176,6 +203,7 @@ const ChristGuard = {
     const found = getFromStore(ref);
     if (!found) throw new Error(`Verse not found: ${ref}`);
     return found;
+    // When a whole chapter is requested (Book C), the caller receives an object: { "1": "...", "2": "...", ... }
   },
 
   isParaphraseAsk(text) {
@@ -195,14 +223,12 @@ const ChristGuard = {
       return { ok: false, reason: "Fails Galatians 1:8 (another gospel)" };
     }
 
-    // Isaiah 8:20 (policy: all quotes must be exact)
-    // We don't detect paraphrase here—your UI already states exact KJV only.
+    // Isaiah 8:20 (policy: exact quotes only)
     return { ok: true, reason: "Pass" };
   },
 
   // Safety gate used by server endpoints (optional helper)
   async generate(ctx) {
-    // If user asked to paraphrase/rewrite Scripture, block early.
     if (this.isParaphraseAsk(ctx.userText)) {
       throw new Error("This assistant will not paraphrase or rewrite Scripture. It only quotes exact (KJV) text.");
     }
