@@ -23,6 +23,21 @@ if (!fs.existsSync(JOURNAL_FILE)) fs.writeFileSync(JOURNAL_FILE, '[]', 'utf-8');
 // Health
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
+app.get('/api/parse', (req, res) => {
+  const { ChristGuard } = require('./christ-guard');
+  const { quote } = ChristGuard;
+  try {
+    const ref = String(req.query.ref || '');
+    // this will throw if not found; we just return the parsed + whether it's a chapter
+    const found = quote(ref);
+    res.json({
+      ref,
+      type: typeof found === 'string' ? 'single-verse' : 'chapter',
+    });
+  } catch (e) {
+    res.status(400).json({ error: String(e.message || e) });
+  }
+});
 // -------- Verse API (now supports Book Chapter:Verse or Book Chapter) -------
 app.get('/api/verse', (req, res) => {
   try {
