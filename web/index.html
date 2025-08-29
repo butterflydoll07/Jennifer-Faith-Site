@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Jennifer • Faith & Journal</title>
+  <link rel="stylesheet" href="styles.css"/>
+</head>
+<body>
+  <header>
+    <h1>Jennifer • Faith & Journal</h1>
+    <p>Exact KJV quotes • No paraphrase • Christ-centered</p>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>Get a Verse</h2>
+      <div class="row">
+        <input id="ref" placeholder="e.g., John 3:16"/>
+        <button id="btn-verse">Quote</button>
+      </div>
+      <pre id="verse"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Journal</h2>
+      <textarea id="journalText" rows="5" placeholder="Write your reflection here..."></textarea>
+      <div class="row">
+        <button id="btn-save">Save Entry</button>
+      </div>
+      <ul id="journalList"></ul>
+    </section>
+
+    <section class="card">
+      <h2>Christ Test</h2>
+      <textarea id="checkText" rows="3" placeholder="Paste any message to test..."></textarea>
+      <div class="row">
+        <button id="btn-check">Run Test</button>
+      </div>
+      <pre id="checkResult"></pre>
+    </section>
+
+    <section class="card">
+      <h2>Weekly Printables</h2>
+      <div class="row">
+        <input id="weekNum" placeholder="Week #"/>
+        <input id="weekTheme" placeholder="Theme (e.g., Family, Trust)"/>
+      </div>
+      <div class="row">
+        <input id="weekRefs" placeholder="Verse refs comma-separated (e.g., John 3:16, Isaiah 8:20)"/>
+      </div>
+      <div class="row">
+        <button id="btn-week-html">Generate HTML</button>
+        <button id="btn-week-pdf">Download PDF</button>
+      </div>
+      <iframe id="preview" style="width:100%;height:400px;border:1px solid #ddd;border-radius:10px;"></iframe>
+    </section>
+  </main>
+
+  <footer>
+    <small>Christ is King • Scripture quoted exactly (KJV)</small>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
