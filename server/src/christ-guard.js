@@ -6,7 +6,7 @@ const crypto = require('crypto');
 // Where the full KJV JSON lives (book -> chapter -> verse after we normalize)
 const STORE_PATH = path.resolve(__dirname, 'en_kjv.json');
 
-// Abbreviations (lowercased keys)
+// Abbreviations (lowercased keys) used during parsing
 const BASE_ABBREVIATIONS = {
   // Pentateuch
   'gen': 'Genesis', 'ge': 'Genesis', 'gn': 'Genesis',
@@ -96,35 +96,86 @@ const KNOWN_HASH = '';
 
 // --- Load & normalize the Bible store ---
 // Supports either:
-// 1) farskipper array: [{book,chapter,verse,text}, ...]
-// 2) nested object: { Book: { "1": { "1": "..." } } }
+// 1) Array of rows: [{ book, chapter, verse, text }, ...]
+// 2) Array of books: [{ abbrev: "gn", chapters: [ ["v1",...], ["v1",...], ... ] }, ...]
+// 3) Already-normalized object: { "Genesis": { "1": { "1": "..." } } }
 function loadRaw() {
   const rawBuf = fs.readFileSync(STORE_PATH);
   if (KNOWN_HASH) {
     const runtimeHash = crypto.createHash('sha256').update(rawBuf).digest('hex');
-    if (runtimeHash !== KNOWN_HASH) throw new Error('[ChristGuard] Scripture store integrity failed.');
+    if (runtimeHash !== KNOWN_HASH) {
+      throw new Error('[ChristGuard] Scripture store integrity failed.');
+    }
   }
   const data = JSON.parse(rawBuf.toString('utf8'));
 
-  // If it's already nested {Book -> Chapter -> Verse}, just return it.
+  // Case 3: already normalized
   if (!Array.isArray(data)) return data;
 
-  // Transform array into nested {Book -> Chapter -> Verse}
-  const store = {};
-  for (const row of data) {
-    // farskipper uses {book, chapter, verse, text}
-    const book = row.book;
-    const chapter = String(row.chapter);
-    const verse = String(row.verse);
-    const text = row.text;
+  const first = data[0] || {};
 
-    if (!book || !chapter || !verse || typeof text !== 'string') continue;
-
-    if (!store[book]) store[book] = {};
-    if (!store[book][chapter]) store[book][chapter] = {};
-    store[book][chapter][verse] = text;
+  // Case 1: row-per-verse
+  if ('book' in first && 'chapter' in first && 'verse' in first) {
+    const store = {};
+    for (const row of data) {
+      const book = String(row.book || '').trim();
+      const chapter = String(row.chapter);
+      const verse = String(row.verse);
+      const text = typeof row.text === 'string' ? row.text : '';
+      if (!book || !chapter || !verse) continue;
+      if (!store[book]) store[book] = {};
+      if (!store[book][chapter]) store[book][chapter] = {};
+      store[book][chapter][verse] = text;
+    }
+    return store;
   }
-  return store;
+
+  // Case 2: book-per-entry (abbrev + chapters matrix)
+  if ('abbrev' in first || 'chapters' in first) {
+    const ABBR_TO_CANON = {
+      gn:'Genesis', ex:'Exodus', lv:'Leviticus', nu:'Numbers', dt:'Deuteronomy',
+      jos:'Joshua', jdg:'Judges', ru:'Ruth',
+      '1sa':'1 Samuel', '2sa':'2 Samuel',
+      '1ki':'1 Kings', '2ki':'2 Kings',
+      '1ch':'1 Chronicles', '2ch':'2 Chronicles',
+      ezr:'Ezra', ne:'Nehemiah', es:'Esther',
+      job:'Job', ps:'Psalms', pr:'Proverbs', ec:'Ecclesiastes', so:'Song of Solomon',
+      is:'Isaiah', je:'Jeremiah', la:'Lamentations', ek:'Ezekiel', da:'Daniel',
+      ho:'Hosea', jl:'Joel', am:'Amos', ob:'Obadiah', jon:'Jonah', mi:'Micah',
+      na:'Nahum', hb:'Habakkuk', zep:'Zephaniah', hg:'Haggai', zec:'Zechariah', mal:'Malachi',
+      mt:'Matthew', mr:'Mark', lu:'Luke', jn:'John', ac:'Acts',
+      ro:'Romans', '1co':'1 Corinthians', '2co':'2 Corinthians',
+      ga:'Galatians', ep:'Ephesians', php:'Philippians', col:'Colossians',
+      '1th':'1 Thessalonians', '2th':'2 Thessalonians',
+      '1ti':'1 Timothy', '2ti':'2 Timothy',
+      tit:'Titus', phm:'Philemon', heb:'Hebrews', jas:'James',
+      '1pe':'1 Peter', '2pe':'2 Peter',
+      '1jn':'1 John', '2jn':'2 John', '3jn':'3 John',
+      jude:'Jude', re:'Revelation'
+    };
+
+    const store = {};
+    for (const bookEntry of data) {
+      const abbr = String(bookEntry.abbrev || bookEntry.abbr || '').toLowerCase();
+      const canonical =
+        ABBR_TO_CANON[abbr] ||
+        bookEntry.name || bookEntry.title || bookEntry.book || abbr;
+
+      const chaptersObj = {};
+      (bookEntry.chapters || []).forEach((versesArr, chapIdx) => {
+        const verseObj = {};
+        (versesArr || []).forEach((text, verseIdx) => {
+          verseObj[String(verseIdx + 1)] = String(text || '');
+        });
+        chaptersObj[String(chapIdx + 1)] = verseObj;
+      });
+
+      store[canonical] = chaptersObj;
+    }
+    return store;
+  }
+
+  throw new Error('Unrecognized en_kjv.json structure');
 }
 
 const STORE = loadRaw();
