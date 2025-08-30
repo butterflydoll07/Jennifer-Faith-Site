@@ -47,6 +47,7 @@ button {
   border-radius: 4px;
   cursor: pointer;
 }
+
 button:hover { background: #004c99; }
 
 pre, ul {
@@ -62,4 +63,4 @@ footer {
   background: #eee;
   font-size: 0.9em;
   margin-top: 2em;
-  }
+}
