@@ -108,30 +108,20 @@ const STORE = loadRaw(); // cache in memory
 // ---------- Build a flexible BOOK_INDEX (abbrevs + every canonical name variant) ----------
 const BOOK_INDEX = (() => {
   const idx = Object.create(null);
-
-  // helper: register a key (normalized) that maps to canonical
   const add = (key, canonical) => { idx[key] = canonical; };
-
-  // Normalize forms: lowercase, collapse spaces, drop trailing dots
   const norm = (s) => String(s).toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
 
-  // 1) From JSON keys (canonical names)
   for (const canonical of Object.keys(STORE)) {
     const n = norm(canonical);
     add(n, canonical);
-
-    // also add versions without "of" (e.g., "song of solomon" -> "song solomon")
     if (n.includes(' of ')) add(n.replace(' of ', ' '), canonical);
-
-    // Also handle numerals jammed together, like "1john"
     const m = n.match(/^([123])\s+(.*)$/);
     if (m) add(`${m[1]}${m[2]}`, canonical);
   }
 
-  // 2) From abbreviation table
   for (const [abbr, canonical] of Object.entries(BASE_ABBREVIATIONS)) {
-    add(norm(abbr), canonical);
-    // also add jammed numeral versions (e.g., "1 cor" -> "1cor")
+    const n = norm(abbr);
+    add(n, canonical);
     const m = abbr.match(/^([123])\s+(.*)$/i);
     if (m) add(norm(`${m[1]}${m[2]}`), canonical);
   }
@@ -141,7 +131,6 @@ const BOOK_INDEX = (() => {
 
 // -------- Verse lookup helpers (Book Chapter:Verse or Book Chapter) --------
 function parseRef(ref) {
-  // Accepts: 'John 3:16', '1 John 4:2', 'Leviticus 2:3', 'Lev 2:3', 'Ps 23'
   const m = String(ref || '')
     .trim()
     .match(/^([1-3]?\s?[A-Za-z. ]+?)\s+(\d+)?(?::(\d+))?$/);
@@ -152,10 +141,8 @@ function parseRef(ref) {
   const chapter = m[2] ? parseInt(m[2], 10) : null;
   const verse = m[3] ? parseInt(m[3], 10) : null;
 
-  // Normalize and resolve to canonical
   const key = BOOK_INDEX.norm(rawBook);
   const canonical = BOOK_INDEX.map[key];
-
   if (!canonical) return null;
 
   return { book: canonical, chapter, verse };
@@ -203,7 +190,6 @@ const ChristGuard = {
     const found = getFromStore(ref);
     if (!found) throw new Error(`Verse not found: ${ref}`);
     return found;
-    // When a whole chapter is requested (Book C), the caller receives an object: { "1": "...", "2": "...", ... }
   },
 
   isParaphraseAsk(text) {
@@ -227,7 +213,6 @@ const ChristGuard = {
     return { ok: true, reason: "Pass" };
   },
 
-  // Safety gate used by server endpoints (optional helper)
   async generate(ctx) {
     if (this.isParaphraseAsk(ctx.userText)) {
       throw new Error("This assistant will not paraphrase or rewrite Scripture. It only quotes exact (KJV) text.");
