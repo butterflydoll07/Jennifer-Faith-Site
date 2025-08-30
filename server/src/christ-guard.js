@@ -3,10 +3,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-// ---------- Where the full KJV JSON lives (book -> chapter -> verse) ----------
+// Where the full KJV JSON lives (book -> chapter -> verse after we normalize)
 const STORE_PATH = path.resolve(__dirname, 'en_kjv.json');
 
-// ---------- Abbreviations (seed set); we’ll also add canonical names from JSON ----------
+// Abbreviations (lowercased keys)
 const BASE_ABBREVIATIONS = {
   // Pentateuch
   'gen': 'Genesis', 'ge': 'Genesis', 'gn': 'Genesis',
@@ -91,101 +91,60 @@ const BASE_ABBREVIATIONS = {
   'rev': 'Revelation', 're': 'Revelation', 'apoc': 'Revelation'
 };
 
-// ---------- Optional integrity lock (leave blank for now) ----------
-const KNOWN_HASH = ''; // e.g., sha256 of the file
+// Optional integrity lock (leave blank)
+const KNOWN_HASH = '';
 
-// ----- EXTRA: support array-shaped JSON (abbrev + chapters[]) by normalizing ---
-const RAW_ABBR_TO_CANON = {
-  gn: 'Genesis', ex: 'Exodus', lv: 'Leviticus', nu: 'Numbers', dt: 'Deuteronomy',
-  jos: 'Joshua', jdg: 'Judges', ru: 'Ruth',
-  '1sa': '1 Samuel', '2sa': '2 Samuel',
-  '1ki': '1 Kings', '2ki': '2 Kings',
-  '1ch': '1 Chronicles', '2ch': '2 Chronicles',
-  ezr: 'Ezra', ne: 'Nehemiah', es: 'Esther',
-  job: 'Job', ps: 'Psalms', pr: 'Proverbs', ec: 'Ecclesiastes', so: 'Song of Solomon',
-  isa: 'Isaiah', jer: 'Jeremiah', la: 'Lamentations', eze: 'Ezekiel', da: 'Daniel',
-  ho: 'Hosea', joe: 'Joel', am: 'Amos', ob: 'Obadiah', jon: 'Jonah', mic: 'Micah',
-  na: 'Nahum', hab: 'Habakkuk', zep: 'Zephaniah', hag: 'Haggai', zec: 'Zechariah', mal: 'Malachi',
-  mt: 'Matthew', mr: 'Mark', lu: 'Luke', joh: 'John', ac: 'Acts',
-  ro: 'Romans',
-  '1co': '1 Corinthians', '2co': '2 Corinthians',
-  ga: 'Galatians', eph: 'Ephesians', php: 'Philippians', col: 'Colossians',
-  '1th': '1 Thessalonians', '2th': '2 Thessalonians',
-  '1ti': '1 Timothy', '2ti': '2 Timothy', tit: 'Titus', phm: 'Philemon',
-  heb: 'Hebrews', jas: 'James',
-  '1pe': '1 Peter', '2pe': '2 Peter',
-  '1jo': '1 John', '2jo': '2 John', '3jo': '3 John',
-  jude: 'Jude', re: 'Revelation'
-};
-
-function normalizeStore(parsed) {
-  // Already a map? return as-is.
-  if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') return parsed;
-
-  // Array-shaped source: [{abbrev, chapters: [[v1, v2,...], ...]}, ...]
-  if (Array.isArray(parsed)) {
-    const out = {};
-    for (const b of parsed) {
-      const ab = String(b.abbrev || '').toLowerCase();
-      const canonical = RAW_ABBR_TO_CANON[ab] || b.name || b.title || ab;
-      const chapters = b.chapters || [];
-      const bookObj = {};
-      chapters.forEach((versesArr, i) => {
-        const chNum = String(i + 1);
-        const chObj = {};
-        (versesArr || []).forEach((text, j) => {
-          chObj[String(j + 1)] = text;
-        });
-        bookObj[chNum] = chObj;
-      });
-      out[canonical] = bookObj;
-    }
-    return out;
-  }
-
-  throw new Error('[ChristGuard] Unsupported Scripture JSON shape.');
-}
-
+// --- Load & normalize the Bible store ---
+// Supports either:
+// 1) farskipper array: [{book,chapter,verse,text}, ...]
+// 2) nested object: { Book: { "1": { "1": "..." } } }
 function loadRaw() {
-  // IMPORTANT: read as UTF-8 string, not Buffer
-  const raw = fs.readFileSync(STORE_PATH, 'utf-8');
-
-  // Optional integrity check
+  const rawBuf = fs.readFileSync(STORE_PATH);
   if (KNOWN_HASH) {
-    const runtimeHash = crypto.createHash('sha256').update(raw, 'utf8').digest('hex');
-    if (runtimeHash !== KNOWN_HASH) {
-      throw new Error('[ChristGuard] Scripture store integrity failed.');
-    }
+    const runtimeHash = crypto.createHash('sha256').update(rawBuf).digest('hex');
+    if (runtimeHash !== KNOWN_HASH) throw new Error('[ChristGuard] Scripture store integrity failed.');
   }
+  const data = JSON.parse(rawBuf.toString('utf8'));
 
-  // Quick sanity check to help if the file isn't actually JSON (e.g., saved HTML)
-  const first = raw.trim()[0];
-  if (first !== '{' && first !== '[') {
-    throw new Error('[ChristGuard] en_kjv.json is not JSON text. Did GitHub serve an HTML page?');
+  // If it's already nested {Book -> Chapter -> Verse}, just return it.
+  if (!Array.isArray(data)) return data;
+
+  // Transform array into nested {Book -> Chapter -> Verse}
+  const store = {};
+  for (const row of data) {
+    // farskipper uses {book, chapter, verse, text}
+    const book = row.book;
+    const chapter = String(row.chapter);
+    const verse = String(row.verse);
+    const text = row.text;
+
+    if (!book || !chapter || !verse || typeof text !== 'string') continue;
+
+    if (!store[book]) store[book] = {};
+    if (!store[book][chapter]) store[book][chapter] = {};
+    store[book][chapter][verse] = text;
   }
-
-  const parsed = JSON.parse(raw);
-  return normalizeStore(parsed);
+  return store;
 }
 
-const STORE = loadRaw(); // cache in memory
+const STORE = loadRaw();
 
-// ---------- Build a flexible BOOK_INDEX (abbrevs + every canonical name variant) ----------
+// --- Build a flexible BOOK_INDEX (abbrevs + every canonical name variant) ---
 const BOOK_INDEX = (() => {
   const idx = Object.create(null);
   const add = (key, canonical) => { idx[key] = canonical; };
   const norm = (s) => String(s).toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
 
-  // from JSON keys (canonical)
+  // From JSON keys (canonical)
   for (const canonical of Object.keys(STORE)) {
     const n = norm(canonical);
     add(n, canonical);
     if (n.includes(' of ')) add(n.replace(' of ', ' '), canonical);
     const m = n.match(/^([123])\s+(.*)$/);
-    if (m) add(`${m[1]}${m[2]}`, canonical); // e.g., "1john"
+    if (m) add(`${m[1]}${m[2]}`, canonical); // e.g., "1 john" -> "1john"
   }
 
-  // from our base abbrevs
+  // From abbreviations
   for (const [abbr, canonical] of Object.entries(BASE_ABBREVIATIONS)) {
     const n = norm(abbr);
     add(n, canonical);
@@ -196,15 +155,14 @@ const BOOK_INDEX = (() => {
   return { add, norm, map: idx };
 })();
 
-// -------- Verse lookup helpers (Book Chapter:Verse or Book Chapter) --------
+// --- Verse lookup helpers (Book Chapter:Verse or Book Chapter) ---
 function parseRef(ref) {
   const m = String(ref || '')
     .trim()
     .match(/^([1-3]?\s?[A-Za-z. ]+?)\s+(\d+)?(?::(\d+))?$/);
-
   if (!m) return null;
 
-  let rawBook = m[1].replace(/\s+/g, ' ').replace(/\.$/, '').trim();
+  const rawBook = m[1].replace(/\s+/g, ' ').replace(/\.$/, '').trim();
   const chapter = m[2] ? parseInt(m[2], 10) : null;
   const verse = m[3] ? parseInt(m[3], 10) : null;
 
@@ -222,36 +180,34 @@ function getFromStore(ref) {
 
   const bookNode = STORE[book];
   if (!bookNode) return null;
+
   if (chapter == null) return null; // must have at least a chapter
 
   const chapNode = bookNode[String(chapter)];
   if (!chapNode) return null;
 
-  if (verse == null) return chapNode; // Whole chapter (object)
+  if (verse == null) return chapNode; // whole chapter
 
   const v = chapNode[String(verse)];
   return typeof v === 'string' ? v : null;
 }
 
-// ---------------------------------------------------------------------------
-// Very simple pattern checks — you can expand later as needed
+// --- Simple pattern checks used by "Christ Test" ---
 const paraphrasePattern =
   /(?!^)\b(paraphrase|reword|rewrite|moderniz(e|e)|simplif(ied|y)|put.*(own|other).*words|make.*easier|retell)\b/i;
 
 function mentionsNewGospel(text) {
   return /(new\s+gospel|updated\s+gospel|different\s+gospel|extra\s+revelation|extra\s+salvation)/i.test(text);
 }
-
 function deniesIncarnation(text) {
   return /(jesus\s+did\s+not\s+come\s+in\s+the\s+flesh|jesus\s+was\s+not\s+incarnate|no\s+incarnation)/i.test(text);
 }
 
-// ---------------------------------------------------------------------------
-// Public API
+// --- Public API ---
 const ChristGuard = {
   loadStore() { return STORE; },
 
-  // returns a string (single verse) or an object (whole chapter)
+  // Returns a string (single verse) or an object (whole chapter)
   quote(ref) {
     const found = getFromStore(ref);
     if (!found) throw new Error(`Verse not found: ${ref}`);
@@ -264,24 +220,18 @@ const ChristGuard = {
 
   christTest(text) {
     const t = String(text || '');
-
-    // 1 John 4:2-3 (incarnation)
     if (deniesIncarnation(t)) {
-      return { ok: false, reason: "Fails 1 John 4:2-3 (denies Christ came in the flesh)" };
+      return { ok: false, reason: 'Fails 1 John 4:2-3 (denies Christ came in the flesh)' };
     }
-
-    // Galatians 1:8 (another gospel)
     if (mentionsNewGospel(t)) {
-      return { ok: false, reason: "Fails Galatians 1:8 (another gospel)" };
+      return { ok: false, reason: 'Fails Galatians 1:8 (another gospel)' };
     }
-
-    // Isaiah 8:20 (policy: exact quotes only)
-    return { ok: true, reason: "Pass" };
+    return { ok: true, reason: 'Pass' };
   },
 
   async generate(ctx) {
     if (this.isParaphraseAsk(ctx.userText)) {
-      throw new Error("This assistant will not paraphrase or rewrite Scripture. It only quotes exact (KJV) text.");
+      throw new Error('This assistant will not paraphrase or rewrite Scripture. It only quotes exact (KJV) text.');
     }
     return true;
   }
