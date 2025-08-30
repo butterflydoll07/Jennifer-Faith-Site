@@ -1,3 +1,7 @@
+// Global error hooks (helps Render logs show root cause)
+process.on('uncaughtException', err => console.error('[uncaughtException]', err));
+process.on('unhandledRejection', err => console.error('[unhandledRejection]', err));
+
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -29,12 +33,19 @@ app.get('/api/parse', (req, res) => {
   try {
     const ref = String(req.query.ref || '');
     const found = ChristGuard.quote(ref); // throws if not found
-    res.json({
-      ref,
-      type: typeof found === 'string' ? 'single-verse' : 'chapter',
-    });
+    res.json({ ref, type: typeof found === 'string' ? 'single-verse' : 'chapter' });
   } catch (e) {
     res.status(400).json({ error: String(e.message || e) });
+  }
+});
+
+// Store sanity endpoint
+app.get('/api/debug/store', (_req, res) => {
+  try {
+    const store = ChristGuard.loadStore();
+    res.json({ ok: true, books: Object.keys(store || {}).length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: String(e.message || e) });
   }
 });
 
@@ -43,14 +54,7 @@ app.get('/api/verse', (req, res) => {
   try {
     const ref = String(req.query.ref || '').trim();
     if (!ref) return res.status(400).json({ error: 'Missing ref' });
-
     const result = ChristGuard.quote(ref); // string (verse) or object (chapter)
-
-    if (typeof result === 'object') {
-      // Whole chapter map: { "1": "...", "2": "...", ... }
-      return res.json({ ref, version: 'KJV', text: result });
-    }
-    // Single verse
     return res.json({ ref, version: 'KJV', text: result });
   } catch (e) {
     return res.status(404).json({ error: e.message });
@@ -73,11 +77,9 @@ app.post('/api/journal', async (req, res) => {
   try {
     const userText = String(req.body.text || '');
     const entry = { id: Date.now(), text: userText, at: new Date().toISOString() };
-
     const arr = JSON.parse(fs.readFileSync(JOURNAL_FILE, 'utf-8'));
     arr.unshift(entry);
     fs.writeFileSync(JOURNAL_FILE, JSON.stringify(arr, null, 2));
-
     res.json({ ok: true, entry });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -88,7 +90,7 @@ app.post('/api/journal', async (req, res) => {
 app.post('/api/printables/week', async (req, res) => {
   try {
     const { week, theme, refs = [] } = req.body || {};
-    const html = await renderWeekHTML({ week, theme, refs, quote: ChristGuard.quote.bind(ChristGuard) });
+    const html = renderWeekHTML({ week, theme, refs, quote: ChristGuard.quote.bind(ChristGuard) });
     res.type('html').send(html);
   } catch (e) {
     res.status(400).send(String(e.message || e));
@@ -98,29 +100,13 @@ app.post('/api/printables/week', async (req, res) => {
 app.post('/api/printables/week.pdf', async (req, res) => {
   try {
     const { week, theme, refs = [] } = req.body || {};
-    const html = await renderWeekHTML({ week, theme, refs, quote: ChristGuard.quote.bind(ChristGuard) });
+    const html = renderWeekHTML({ week, theme, refs, quote: ChristGuard.quote.bind(ChristGuard) });
     const pdf = await makePDF(html);
     res.setHeader('Content-Disposition', `attachment; filename="week-${week || 'study'}.pdf"`);
     res.type('application/pdf').send(pdf);
   } catch (e) {
     res.status(400).send(String(e.message || e));
   }
-});
-
-// -------- Store debug (check keys exist) -------------------------------------
-app.get('/api/debug/has', (req, res) => {
-  const { book = '', chapter = '', verse = '' } = req.query;
-  const store = ChristGuard.loadStore();
-  const b = store[book];
-  const c = b && b[chapter];
-  const v = c && c[verse];
-  res.json({
-    hasBook: !!b,
-    hasChapter: !!c,
-    hasVerse: typeof v === 'string',
-    sampleChapters: b ? Object.keys(b).slice(0, 5) : [],
-    sampleVerses: c ? Object.keys(c).slice(0, 10) : [],
-  });
 });
 
 // Start
