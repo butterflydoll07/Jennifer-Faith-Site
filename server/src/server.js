@@ -1,7 +1,8 @@
-// Global error hooks (helps Render logs show root cause)
+// ----------------- Global error hooks (better Render logs) -------------------
 process.on('uncaughtException', err => console.error('[uncaughtException]', err));
 process.on('unhandledRejection', err => console.error('[unhandledRejection]', err));
 
+// ------------------------------- Imports ------------------------------------
 const express = require('express');
 const path = require('path');
 const fs = require('fs');
@@ -11,6 +12,7 @@ const bodyParser = require('body-parser');
 const { ChristGuard } = require('./christ-guard');
 const { renderWeekHTML, makePDF } = require('./printables');
 
+// ------------------------------- App setup ----------------------------------
 const app = express();
 app.use(cors());
 app.use(bodyParser.json());
@@ -25,7 +27,7 @@ if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const JOURNAL_FILE = path.join(DATA_DIR, 'journal.json');
 if (!fs.existsSync(JOURNAL_FILE)) fs.writeFileSync(JOURNAL_FILE, '[]', 'utf-8');
 
-// Health
+// ------------------------------- Health -------------------------------------
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 // Quick parser/debug endpoint
@@ -49,7 +51,27 @@ app.get('/api/debug/store', (_req, res) => {
   }
 });
 
-// -------- Verse API (Book C:V or Book C) ------------------------------------
+// Store key check endpoint (super helpful for missing verses)
+app.get('/api/debug/has', (req, res) => {
+  try {
+    const { book = '', chapter = '', verse = '' } = req.query;
+    const store = ChristGuard.loadStore();
+    const b = store[book];
+    const c = b && b[String(chapter)];
+    const v = c && c[String(verse)];
+    res.json({
+      hasBook: !!b,
+      hasChapter: !!c,
+      hasVerse: typeof v === 'string',
+      sampleChapters: b ? Object.keys(b).slice(0, 5) : [],
+      sampleVerses: c ? Object.keys(c).slice(0, 10) : [],
+    });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// -------------------------- Verse API (Book C[:V]) --------------------------
 app.get('/api/verse', (req, res) => {
   try {
     const ref = String(req.query.ref || '').trim();
@@ -61,19 +83,19 @@ app.get('/api/verse', (req, res) => {
   }
 });
 
-// -------- Christ Test --------------------------------------------------------
+// ------------------------------ Christ Test ---------------------------------
 app.post('/api/check', (req, res) => {
   const text = String(req.body.text || '');
   res.json(ChristGuard.christTest(text));
 });
 
-// -------- Journal ------------------------------------------------------------
+// ------------------------------- Journal ------------------------------------
 app.get('/api/journal', (_req, res) => {
   const arr = JSON.parse(fs.readFileSync(JOURNAL_FILE, 'utf-8'));
   res.json(arr);
 });
 
-app.post('/api/journal', async (req, res) => {
+app.post('/api/journal', (req, res) => {
   try {
     const userText = String(req.body.text || '');
     const entry = { id: Date.now(), text: userText, at: new Date().toISOString() };
@@ -86,11 +108,11 @@ app.post('/api/journal', async (req, res) => {
   }
 });
 
-// -------- Weekly printables (HTML + PDF) ------------------------------------
+// -------------------------- Weekly printables --------------------------------
 app.post('/api/printables/week', async (req, res) => {
   try {
     const { week, theme, refs = [] } = req.body || {};
-    const html = renderWeekHTML({ week, theme, refs, quote: ChristGuard.quote.bind(ChristGuard) });
+    const html = await renderWeekHTML({ week, theme, refs, quote: ChristGuard.quote.bind(ChristGuard) });
     res.type('html').send(html);
   } catch (e) {
     res.status(400).send(String(e.message || e));
@@ -100,7 +122,7 @@ app.post('/api/printables/week', async (req, res) => {
 app.post('/api/printables/week.pdf', async (req, res) => {
   try {
     const { week, theme, refs = [] } = req.body || {};
-    const html = renderWeekHTML({ week, theme, refs, quote: ChristGuard.quote.bind(ChristGuard) });
+    const html = await renderWeekHTML({ week, theme, refs, quote: ChristGuard.quote.bind(ChristGuard) });
     const pdf = await makePDF(html);
     res.setHeader('Content-Disposition', `attachment; filename="week-${week || 'study'}.pdf"`);
     res.type('application/pdf').send(pdf);
@@ -109,6 +131,14 @@ app.post('/api/printables/week.pdf', async (req, res) => {
   }
 });
 
-// Start
+// ------------------------------- Start --------------------------------------
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Server listening on :${PORT}`));
+app.listen(PORT, () => {
+  console.log(`Server listening on :${PORT}`);
+  // Prewarm heavy KJV load *after* we’re live, so cold starts pass health checks fast
+  try {
+    setImmediate(() => ChristGuard.prewarm());
+  } catch (e) {
+    console.warn('Prewarm failed (will load on first request):', e.message || e);
+  }
+});
