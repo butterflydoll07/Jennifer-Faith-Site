@@ -1,13 +1,9 @@
 function renderVerseResult(data) {
   const el = document.getElementById("verse");
-  if (data.error) {
-    el.textContent = `Error: ${data.error}`;
-    return;
-  }
+  if (data.error) { el.textContent = `Error: ${data.error}`; return; }
   const txt = data.text;
 
   if (txt && typeof txt === "object") {
-    // Whole chapter: { "1": "...", "2": "...", ... }
     el.textContent = Object.entries(txt)
       .sort((a, b) => Number(a[0]) - Number(b[0]))
       .map(([n, t]) => `${n}. ${t}`)
@@ -21,10 +17,7 @@ function renderVerseResult(data) {
 
 async function getVerse() {
   const ref = (document.getElementById("ref").value || "").trim();
-  if (!ref) {
-    renderVerseResult({ error: "Please enter a reference (e.g., John 3:16 or Ps 23)." });
-    return;
-  }
+  if (!ref) { renderVerseResult({ error: "Please enter a reference (e.g., John 3:16 or Ps 23)." }); return; }
   const res = await fetch(`/api/verse?ref=${encodeURIComponent(ref)}`);
   const data = await res.json();
   renderVerseResult(data);
@@ -92,7 +85,7 @@ async function genWeekPDF() {
   window.open(url, "_blank");
 }
 
-// Bind buttons (script is loaded at the end of <body>, so elements exist)
+// Bind buttons
 document.getElementById("btn-verse").onclick = getVerse;
 document.getElementById("btn-save").onclick = saveJournal;
 document.getElementById("btn-check").onclick = runCheck;
