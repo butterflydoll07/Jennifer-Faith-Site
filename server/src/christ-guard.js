@@ -96,7 +96,6 @@ const KNOWN_HASH = ''; // e.g., sha256 of the file
 
 // ----- EXTRA: support array-shaped JSON (abbrev + chapters[]) by normalizing ---
 const RAW_ABBR_TO_CANON = {
-  // (covers common KJV export abbrevs; extend if your source uses others)
   gn: 'Genesis', ex: 'Exodus', lv: 'Leviticus', nu: 'Numbers', dt: 'Deuteronomy',
   jos: 'Joshua', jdg: 'Judges', ru: 'Ruth',
   '1sa': '1 Samuel', '2sa': '2 Samuel',
@@ -120,10 +119,10 @@ const RAW_ABBR_TO_CANON = {
 };
 
 function normalizeStore(parsed) {
-  // If it's already an object map, return as-is.
+  // Already a map? return as-is.
   if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') return parsed;
 
-  // If it's an array like [{abbrev, chapters: [[v1, v2, ...], ...]}, ...]
+  // Array-shaped source: [{abbrev, chapters: [[v1, v2,...], ...]}, ...]
   if (Array.isArray(parsed)) {
     const out = {};
     for (const b of parsed) {
@@ -148,11 +147,23 @@ function normalizeStore(parsed) {
 }
 
 function loadRaw() {
-  const raw = fs.readFileSync(STORE_PATH);
+  // IMPORTANT: read as UTF-8 string, not Buffer
+  const raw = fs.readFileSync(STORE_PATH, 'utf-8');
+
+  // Optional integrity check
   if (KNOWN_HASH) {
-    const runtimeHash = crypto.createHash('sha256').update(raw).digest('hex');
-    if (runtimeHash !== KNOWN_HASH) throw new Error('[ChristGuard] Scripture store integrity failed.');
+    const runtimeHash = crypto.createHash('sha256').update(raw, 'utf8').digest('hex');
+    if (runtimeHash !== KNOWN_HASH) {
+      throw new Error('[ChristGuard] Scripture store integrity failed.');
+    }
   }
+
+  // Quick sanity check to help if the file isn't actually JSON (e.g., saved HTML)
+  const first = raw.trim()[0];
+  if (first !== '{' && first !== '[') {
+    throw new Error('[ChristGuard] en_kjv.json is not JSON text. Did GitHub serve an HTML page?');
+  }
+
   const parsed = JSON.parse(raw);
   return normalizeStore(parsed);
 }
