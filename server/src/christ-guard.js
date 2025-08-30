@@ -94,13 +94,67 @@ const BASE_ABBREVIATIONS = {
 // ---------- Optional integrity lock (leave blank for now) ----------
 const KNOWN_HASH = ''; // e.g., sha256 of the file
 
+// ----- EXTRA: support array-shaped JSON (abbrev + chapters[]) by normalizing ---
+const RAW_ABBR_TO_CANON = {
+  // (covers common KJV export abbrevs; extend if your source uses others)
+  gn: 'Genesis', ex: 'Exodus', lv: 'Leviticus', nu: 'Numbers', dt: 'Deuteronomy',
+  jos: 'Joshua', jdg: 'Judges', ru: 'Ruth',
+  '1sa': '1 Samuel', '2sa': '2 Samuel',
+  '1ki': '1 Kings', '2ki': '2 Kings',
+  '1ch': '1 Chronicles', '2ch': '2 Chronicles',
+  ezr: 'Ezra', ne: 'Nehemiah', es: 'Esther',
+  job: 'Job', ps: 'Psalms', pr: 'Proverbs', ec: 'Ecclesiastes', so: 'Song of Solomon',
+  isa: 'Isaiah', jer: 'Jeremiah', la: 'Lamentations', eze: 'Ezekiel', da: 'Daniel',
+  ho: 'Hosea', joe: 'Joel', am: 'Amos', ob: 'Obadiah', jon: 'Jonah', mic: 'Micah',
+  na: 'Nahum', hab: 'Habakkuk', zep: 'Zephaniah', hag: 'Haggai', zec: 'Zechariah', mal: 'Malachi',
+  mt: 'Matthew', mr: 'Mark', lu: 'Luke', joh: 'John', ac: 'Acts',
+  ro: 'Romans',
+  '1co': '1 Corinthians', '2co': '2 Corinthians',
+  ga: 'Galatians', eph: 'Ephesians', php: 'Philippians', col: 'Colossians',
+  '1th': '1 Thessalonians', '2th': '2 Thessalonians',
+  '1ti': '1 Timothy', '2ti': '2 Timothy', tit: 'Titus', phm: 'Philemon',
+  heb: 'Hebrews', jas: 'James',
+  '1pe': '1 Peter', '2pe': '2 Peter',
+  '1jo': '1 John', '2jo': '2 John', '3jo': '3 John',
+  jude: 'Jude', re: 'Revelation'
+};
+
+function normalizeStore(parsed) {
+  // If it's already an object map, return as-is.
+  if (parsed && !Array.isArray(parsed) && typeof parsed === 'object') return parsed;
+
+  // If it's an array like [{abbrev, chapters: [[v1, v2, ...], ...]}, ...]
+  if (Array.isArray(parsed)) {
+    const out = {};
+    for (const b of parsed) {
+      const ab = String(b.abbrev || '').toLowerCase();
+      const canonical = RAW_ABBR_TO_CANON[ab] || b.name || b.title || ab;
+      const chapters = b.chapters || [];
+      const bookObj = {};
+      chapters.forEach((versesArr, i) => {
+        const chNum = String(i + 1);
+        const chObj = {};
+        (versesArr || []).forEach((text, j) => {
+          chObj[String(j + 1)] = text;
+        });
+        bookObj[chNum] = chObj;
+      });
+      out[canonical] = bookObj;
+    }
+    return out;
+  }
+
+  throw new Error('[ChristGuard] Unsupported Scripture JSON shape.');
+}
+
 function loadRaw() {
   const raw = fs.readFileSync(STORE_PATH);
   if (KNOWN_HASH) {
     const runtimeHash = crypto.createHash('sha256').update(raw).digest('hex');
     if (runtimeHash !== KNOWN_HASH) throw new Error('[ChristGuard] Scripture store integrity failed.');
   }
-  return JSON.parse(raw);
+  const parsed = JSON.parse(raw);
+  return normalizeStore(parsed);
 }
 
 const STORE = loadRaw(); // cache in memory
@@ -111,14 +165,16 @@ const BOOK_INDEX = (() => {
   const add = (key, canonical) => { idx[key] = canonical; };
   const norm = (s) => String(s).toLowerCase().replace(/\./g, '').replace(/\s+/g, ' ').trim();
 
+  // from JSON keys (canonical)
   for (const canonical of Object.keys(STORE)) {
     const n = norm(canonical);
     add(n, canonical);
     if (n.includes(' of ')) add(n.replace(' of ', ' '), canonical);
     const m = n.match(/^([123])\s+(.*)$/);
-    if (m) add(`${m[1]}${m[2]}`, canonical);
+    if (m) add(`${m[1]}${m[2]}`, canonical); // e.g., "1john"
   }
 
+  // from our base abbrevs
   for (const [abbr, canonical] of Object.entries(BASE_ABBREVIATIONS)) {
     const n = norm(abbr);
     add(n, canonical);
@@ -155,7 +211,6 @@ function getFromStore(ref) {
 
   const bookNode = STORE[book];
   if (!bookNode) return null;
-
   if (chapter == null) return null; // must have at least a chapter
 
   const chapNode = bookNode[String(chapter)];
