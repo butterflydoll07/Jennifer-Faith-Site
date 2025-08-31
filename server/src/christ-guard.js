@@ -1,15 +1,18 @@
-// christ-guard.js — exact KJV quotes only; lazy load + robust parsing + "Christ Test"
+// christ-guard.js — exact KJV quotes only; flexible loaders + "Christ Test"
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const STORE_PATH = path.resolve(__dirname, 'en_kjv.json');
-const KNOWN_HASH = ''; // optional integrity lock
+// ---------- Where the book JSON files live ----------
+const BIBLE_DIR = path.resolve(__dirname, 'bible');     // <--- folder with 66 JSON files
 
-// Abbreviations (lowercased keys)
+// ---------- Optional integrity lock (leave blank) ----------
+const KNOWN_HASH = ''; // sha256 of concatenated files if you ever want to lock
+
+// ---------- Abbreviations (lowercased keys) ----------
 const BASE_ABBREVIATIONS = {
   // Pentateuch
-  'gen':'Genesis','ge':'Genesis','gn':'Genesis',
+  'gen': 'Genesis','ge':'Genesis','gn':'Genesis',
   'ex':'Exodus','exod':'Exodus',
   'lev':'Leviticus','lv':'Leviticus',
   'num':'Numbers','nu':'Numbers','nm':'Numbers','nb':'Numbers',
@@ -36,13 +39,11 @@ const BASE_ABBREVIATIONS = {
   // Minor Prophets
   'hos':'Hosea','joel':'Joel','amos':'Amos','obad':'Obadiah','ob':'Obadiah',
   'jon':'Jonah','mic':'Micah','nah':'Nahum','hab':'Habakkuk',
-  'zeph':'Zephaniah','zep':'Zephaniah','hag':'Haggai',
-  'zech':'Zechariah','zec':'Zechariah','mal':'Malachi',
+  'zeph':'Zephaniah','zep':'Zephaniah','hag':'Haggai','zech':'Zechariah','zec':'Zechariah','mal':'Malachi',
   // Gospels & Acts
   'mt':'Matthew','matt':'Matthew','mk':'Mark','lk':'Luke','jn':'John','acts':'Acts',
-  // Paul
-  'rom':'Romans',
-  '1cor':'1 Corinthians','1 cor':'1 Corinthians','i cor':'1 Corinthians',
+  // Pauline Epistles
+  'rom':'Romans','1cor':'1 Corinthians','1 cor':'1 Corinthians','i cor':'1 Corinthians',
   '2cor':'2 Corinthians','2 cor':'2 Corinthians','ii cor':'2 Corinthians',
   'gal':'Galatians','eph':'Ephesians','phil':'Philippians','col':'Colossians',
   '1thess':'1 Thessalonians','1 thess':'1 Thessalonians','i thess':'1 Thessalonians',
@@ -50,7 +51,7 @@ const BASE_ABBREVIATIONS = {
   '1tim':'1 Timothy','1 tim':'1 Timothy','i tim':'1 Timothy',
   '2tim':'2 Timothy','2 tim':'2 Timothy','ii tim':'2 Timothy',
   'tit':'Titus','phlm':'Philemon','philem':'Philemon',
-  // General & Revelation
+  // General Epistles & Revelation
   'heb':'Hebrews','jas':'James',
   '1pet':'1 Peter','1 pet':'1 Peter','i pet':'1 Peter',
   '2pet':'2 Peter','2 pet':'2 Peter','ii pet':'2 Peter',
@@ -60,174 +61,157 @@ const BASE_ABBREVIATIONS = {
   'jude':'Jude','rev':'Revelation','re':'Revelation','apoc':'Revelation'
 };
 
-// -------------------- Loader (supports multiple JSON shapes) -----------------
-function normalizeStore(data) {
-  // Already nested object?
-  if (!Array.isArray(data)) return data;
+// ---------- Helpers ----------
+const norm = s => String(s).toLowerCase().replace(/\./g,'').replace(/\s+/g,' ').trim();
 
-  const first = data[0] || {};
+// Convert any supported source JSON for one book → nested { [chapter]: { [verse]: text } }
+function normalizeOneBook(json, fallbackBookName) {
+  // aruljohn: { book: "Leviticus", chapters: [ [ "1:1", ...], [ ... ] ] }
+  if (json && Array.isArray(json.chapters)) {
+    const book = json.book || fallbackBookName;
+    const out = {};
+    json.chapters.forEach((chapterArr, i) => {
+      const chapNo = String(i + 1);
+      out[chapNo] = {};
+      chapterArr.forEach((verseText, j) => {
+        const vNo = String(j + 1);
+        out[chapNo][vNo] = String(verseText);
+      });
+    });
+    return { book, map: out };
+  }
 
-  // Row-per-verse: [{book,chapter,verse,text}, ...]
-  if ('book' in first && 'chapter' in first && 'verse' in first) {
-    const store = {};
-    for (const row of data) {
-      const book = String(row.book || '').trim();
+  // farskipper: [ { book, chapter, verse, text }, ... ]
+  if (Array.isArray(json)) {
+    const out = {};
+    let book = fallbackBookName;
+    for (const row of json) {
+      book = row.book || book;
       const c = String(row.chapter);
       const v = String(row.verse);
-      const t = typeof row.text === 'string' ? row.text : '';
-      if (!book || !c || !v) continue;
-      (store[book] ||= {})[c] ||= {};
-      store[book][c][v] = t;
+      if (!out[c]) out[c] = {};
+      out[c][v] = String(row.text || '');
     }
-    return store;
+    return { book, map: out };
   }
 
-  // Book-per-entry: {abbrev, chapters:[[v1,v2,...],[...],...]}
-  if ('abbrev' in first || 'chapters' in first) {
-    const ABBR_TO_CANON = {
-      gn:'Genesis', ex:'Exodus', lv:'Leviticus', nu:'Numbers', dt:'Deuteronomy',
-      jos:'Joshua', jdg:'Judges', ru:'Ruth',
-      '1sa':'1 Samuel', '2sa':'2 Samuel',
-      '1ki':'1 Kings', '2ki':'2 Kings',
-      '1ch':'1 Chronicles', '2ch':'2 Chronicles',
-      ezr:'Ezra', ne:'Nehemiah', es:'Esther',
-      job:'Job', ps:'Psalms', pr:'Proverbs', ec:'Ecclesiastes', so:'Song of Solomon',
-      is:'Isaiah', je:'Jeremiah', la:'Lamentations', ek:'Ezekiel', da:'Daniel',
-      ho:'Hosea', jl:'Joel', am:'Amos', ob:'Obadiah', jon:'Jonah', mi:'Micah',
-      na:'Nahum', hb:'Habakkuk', zep:'Zephaniah', hg:'Haggai', zec:'Zechariah', mal:'Malachi',
-      mt:'Matthew', mr:'Mark', lu:'Luke', jn:'John', ac:'Acts',
-      ro:'Romans', '1co':'1 Corinthians', '2co':'2 Corinthians',
-      ga:'Galatians', ep:'Ephesians', php:'Philippians', col:'Colossians',
-      '1th':'1 Thessalonians', '2th':'2 Thessalonians',
-      '1ti':'1 Timothy', '2ti':'2 Timothy',
-      tit:'Titus', phm:'Philemon', heb:'Hebrews', jas:'James',
-      '1pe':'1 Peter', '2pe':'2 Peter',
-      '1jn':'1 John', '2jn':'2 John', '3jn':'3 John',
-      jude:'Jude', re:'Revelation'
-    };
-
-    const store = {};
-    for (const b of data) {
-      const ab = String(b.abbrev || b.abbr || '').toLowerCase();
-      const canonical = ABBR_TO_CANON[ab] || b.name || b.title || b.book || ab;
-      const chapters = {};
-      (b.chapters || []).forEach((verses, ci) => {
-        const vobj = {};
-        (verses || []).forEach((text, vi) => { vobj[String(vi + 1)] = String(text || ''); });
-        chapters[String(ci + 1)] = vobj;
-      });
-      store[canonical] = chapters;
-    }
-    return store;
+  // already-nested: { "Leviticus": { "2": { "3": "..." } } }
+  if (json && typeof json === 'object') {
+    const onlyKey = Object.keys(json)[0] || fallbackBookName;
+    return { book: onlyKey, map: json[onlyKey] || json };
   }
 
-  throw new Error('Unrecognized en_kjv.json structure');
+  throw new Error('Unsupported book JSON shape');
 }
 
-function loadRaw() {
-  const raw = fs.readFileSync(STORE_PATH);
+// Load all *.json files from BIBLE_DIR and build STORE = { Book -> Chapter -> Verse }
+function loadStore() {
+  const files = fs.existsSync(BIBLE_DIR) ? fs.readdirSync(BIBLE_DIR) : [];
+  if (files.length === 0) {
+    throw new Error(`[ChristGuard] No book files found in ${BIBLE_DIR}. Add 66 JSON files.`);
+  }
+
+  const parts = [];
+  const STORE = {};
+
+  for (const fname of files.filter(f => f.toLowerCase().endsWith('.json'))) {
+    const full = path.join(BIBLE_DIR, fname);
+    const raw = fs.readFileSync(full);
+    parts.push(raw); // optional integrity concat
+    const json = JSON.parse(raw.toString('utf8'));
+
+    const fallbackName = path.basename(fname, '.json');
+    const { book, map } = normalizeOneBook(json, fallbackName);
+
+    if (!STORE[book]) STORE[book] = {};
+    // merge chapters
+    for (const c of Object.keys(map || {})) {
+      if (!STORE[book][c]) STORE[book][c] = {};
+      Object.assign(STORE[book][c], map[c]);
+    }
+  }
+
   if (KNOWN_HASH) {
-    const runtimeHash = crypto.createHash('sha256').update(raw).digest('hex');
-    if (runtimeHash !== KNOWN_HASH) throw new Error('[ChristGuard] Scripture store integrity failed.');
+    const hash = crypto.createHash('sha256').update(Buffer.concat(parts)).digest('hex');
+    if (hash !== KNOWN_HASH) throw new Error('[ChristGuard] Scripture store integrity failed.');
   }
-  return normalizeStore(JSON.parse(raw.toString('utf8')));
-}
 
-// Lazy cache (filled on first use or via prewarm)
-let STORE = null;
-function ensureStore() {
-  if (!STORE) STORE = loadRaw();
   return STORE;
 }
 
-// -------------------- Book index (abbrevs + canonical) ----------------------
+const STORE = loadStore();
+
+// Build BOOK_INDEX (abbrevs + canonical keys we see)
 const BOOK_INDEX = (() => {
   const idx = Object.create(null);
-  const add = (k, c) => { idx[k] = c; };
-  const norm = s => String(s).toLowerCase().replace(/\./g,'').replace(/\s+/g,' ').trim();
+  const add = (k, canon) => { idx[k] = canon; };
 
-  // Build later, after STORE exists
-  function build() {
-    const store = ensureStore();
-    for (const canonical of Object.keys(store)) {
-      const n = norm(canonical);
-      add(n, canonical);
-      if (n.includes(' of ')) add(n.replace(' of ', ' '), canonical);
-      const m = n.match(/^([123])\s+(.*)$/);
-      if (m) add(`${m[1]}${m[2]}`, canonical);
-    }
-    for (const [abbr, canonical] of Object.entries(BASE_ABBREVIATIONS)) {
-      const n = norm(abbr);
-      add(n, canonical);
-      const m = abbr.match(/^([123])\s+(.*)$/i);
-      if (m) add(norm(`${m[1]}${m[2]}`), canonical);
-    }
+  for (const canonical of Object.keys(STORE)) {
+    const n = norm(canonical);
+    add(n, canonical);
+    if (n.includes(' of ')) add(n.replace(' of ', ' '), canonical);
+    const m = n.match(/^([123])\s+(.*)$/);
+    if (m) add(`${m[1]}${m[2]}`, canonical); // "1john"
   }
-
-  return { map: idx, norm, build };
+  for (const [abbr, canonical] of Object.entries(BASE_ABBREVIATIONS)) {
+    const n = norm(abbr);
+    add(n, canonical);
+    const m = abbr.match(/^([123])\s+(.*)$/i);
+    if (m) add(norm(`${m[1]}${m[2]}`), canonical);
+  }
+  return { map: idx, norm };
 })();
 
-// -------------------- Lookups --------------------
+// Parse "Book C:V" or "Book C"
 function parseRef(ref) {
   const m = String(ref || '').trim().match(/^([1-3]?\s?[A-Za-z. ]+?)\s+(\d+)?(?::(\d+))?$/);
   if (!m) return null;
-  const rawBook = m[1].replace(/\s+/g,' ').replace(/\.$/,'').trim();
-  const chapter = m[2] ? parseInt(m[2],10) : null;
-  const verse   = m[3] ? parseInt(m[3],10) : null;
-
-  if (!Object.keys(BOOK_INDEX.map).length) BOOK_INDEX.build();
-
-  const canonical = BOOK_INDEX.map[BOOK_INDEX.norm(rawBook)];
-  if (!canonical) return null;
-  return { book: canonical, chapter, verse };
+  const key = BOOK_INDEX.norm(m[1].replace(/\s+/g,' ').replace(/\.$/, ''));
+  const book = BOOK_INDEX.map[key];
+  const chapter = m[2] ? parseInt(m[2], 10) : null;
+  const verse   = m[3] ? parseInt(m[3], 10) : null;
+  if (!book) return null;
+  return { book, chapter, verse };
 }
 
+// Lookup
 function getFromStore(ref) {
-  const store = ensureStore();
   const p = parseRef(ref);
   if (!p) return null;
   const { book, chapter, verse } = p;
 
-  const b = store[book];           if (!b) return null;
+  const b = STORE[book];
+  if (!b) return null;
   if (chapter == null) return null;
-  const c = b[String(chapter)];    if (!c) return null;
-  if (verse == null) return c;
+
+  const c = b[String(chapter)];
+  if (!c) return null;
+
+  if (verse == null) return c; // whole chapter
   const v = c[String(verse)];
   return typeof v === 'string' ? v : null;
 }
 
-// -------------------- Christ Test helpers --------------------
-const paraphrasePattern =
-  /(?!^)\b(paraphrase|reword|rewrite|moderniz(e|e)|simplif(ied|y)|put.*(own|other).*words|make.*easier|retell)\b/i;
+// --------- Simple "Christ Test" patterns ----------
+const paraphrasePattern = /(?!^)\b(paraphrase|reword|rewrite|moderniz(e|e)|simplif(ied|y)|put.*(own|other).*words|make.*easier|retell)\b/i;
+const mentionsNewGospel = t => /(new\s+gospel|updated\s+gospel|different\s+gospel|extra\s+revelation|extra\s+salvation)/i.test(t);
+const deniesIncarnation = t => /(jesus\s+did\s+not\s+come\s+in\s+the\s+flesh|jesus\s+was\s+not\s+incarnate|no\s+incarnation)/i.test(t);
 
-const mentionsNewGospel = t =>
-  /(new\s+gospel|updated\s+gospel|different\s+gospel|extra\s+revelation|extra\s+salvation)/i.test(t);
-
-const deniesIncarnation = t =>
-  /(jesus\s+did\s+not\s+come\s+in\s+the\s+flesh|jesus\s+was\s+not\s+incarnate|no\s+incarnation)/i.test(t);
-
-// -------------------- Public API --------------------
+// --------- Public API ----------
 const ChristGuard = {
-  // load the store now (non-blocking for startup if called after listen)
-  prewarm() { ensureStore(); BOOK_INDEX.build(); },
-
-  loadStore() { return ensureStore(); },
-
+  loadStore() { return STORE; },
   quote(ref) {
     const found = getFromStore(ref);
     if (!found) throw new Error(`Verse not found: ${ref}`);
     return found;
   },
-
-  isParaphraseAsk(text) { return paraphrasePattern.test(String(text || '')); },
-
-  christTest(text) {
-    const t = String(text || '');
+  isParaphraseAsk(txt) { return paraphrasePattern.test(String(txt || '')); },
+  christTest(txt) {
+    const t = String(txt || '');
     if (deniesIncarnation(t)) return { ok:false, reason:'Fails 1 John 4:2-3 (denies Christ came in the flesh)' };
     if (mentionsNewGospel(t)) return { ok:false, reason:'Fails Galatians 1:8 (another gospel)' };
     return { ok:true, reason:'Pass' };
   },
-
   async generate(ctx) {
     if (this.isParaphraseAsk(ctx.userText)) {
       throw new Error('This assistant will not paraphrase or rewrite Scripture. It only quotes exact (KJV) text.');
